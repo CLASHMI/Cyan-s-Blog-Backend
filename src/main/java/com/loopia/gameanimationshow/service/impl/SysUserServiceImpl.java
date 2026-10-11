@@ -2,6 +2,7 @@ package com.loopia.gameanimationshow.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.loopia.gameanimationshow.common.ClientIpUtil;
 import com.loopia.gameanimationshow.common.JwtUtil;
 import com.loopia.gameanimationshow.common.ResultCode;
 import com.loopia.gameanimationshow.common.UserContext;
@@ -13,7 +14,9 @@ import com.loopia.gameanimationshow.mapper.SysUserMapper;
 import com.loopia.gameanimationshow.model.vo.LoginVO;
 import com.loopia.gameanimationshow.model.vo.RecentUserVO;
 import java.util.List;
+import com.loopia.gameanimationshow.service.AiService;
 import com.loopia.gameanimationshow.service.SysUserService;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import com.qcloud.cos.COSClient;
 import com.qcloud.cos.ClientConfig;
 import com.qcloud.cos.auth.BasicCOSCredentials;
@@ -31,7 +34,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.UUID;
 
 /**
@@ -63,6 +70,16 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     private String adminSecret;
     private final JwtUtil jwtUtil;
     private final CacheManager cacheManager;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final AiService aiService;
+
+    /* 昵称改名每日上限 */
+    private static final int NICKNAME_DAILY_LIMIT = 2;
+    /* 注册接口兜底：同一 IP 每日最多创建的新游客账号数 */
+    private static final int REGISTER_IP_DAILY_LIMIT = 15;
+
+    /* 限流“每日”口径统一使用上海时区 */
+    private final Clock dailyClock = Clock.system(ZoneId.of("Asia/Shanghai"));
     @Value("${loopia.tencent.cos.domain-url}")
     private String domainUrl;
     @Value("${loopia.tencent.cos.secret-id}")
@@ -73,6 +90,19 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     private String cosRegion;
     @Value("${loopia.tencent.cos.bucket-name}")
     private String cosBucket;
+
+    /* 读取当天的计数：key 不存在或值异常时按 0 处理，避免脏值把限流判成 500 */
+    private long readDailyCounter(String key) {
+        String value = stringRedisTemplate.opsForValue().get(key);
+        if (!StringUtils.hasText(value)) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
 
     /**
      * 初始化用户
@@ -88,6 +118,26 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
                     .eq(SysUser::getRole, SystemConstant.Role.VISITOR));
         }
         if (user == null) {
+            // 注册接口兜底：同一 IP 每天最多创建 15 个新游客账号，防止自动发号被恶意刷取
+            String clientIp = ClientIpUtil.currentIp();
+            if (clientIp != null) {
+                String ipKey = "register:ip:" + clientIp + ":" + LocalDate.now(dailyClock);
+                /* 兜底修复：键若因人工 SET 或异常中断丢了 TTL，会变成永久键，
+                   该 IP 跨天也不会恢复，这里先补上过期时间。 */
+                Long ipTtl = stringRedisTemplate.getExpire(ipKey);
+                if (ipTtl != null && ipTtl == -1L) {
+                    stringRedisTemplate.expire(ipKey, Duration.ofHours(24));
+                }
+                /* 先判阈值再自增：额度已满时直接拦截，不再对计数器做自增，
+                   否则被拒请求会持续把计数推高（曾出现上限 15 却涨到 17 的脏写）。 */
+                if (readDailyCounter(ipKey) >= REGISTER_IP_DAILY_LIMIT) {
+                    throw new ServiceException(429, "当前网络今日创建的游客账号数已达上限");
+                }
+                Long ipCount = stringRedisTemplate.opsForValue().increment(ipKey);
+                if (ipCount != null && ipCount == 1L) {
+                    stringRedisTemplate.expire(ipKey, Duration.ofHours(24));
+                }
+            }
             user = new SysUser();
             String freshUuid = UUID.randomUUID().toString();
             user.setUuid(freshUuid);
@@ -125,6 +175,21 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new ServiceException(ResultCode.PARAM_ERROR.getCode(), MessageConstant.User.NICKNAME_TOO_LONG);
         }
 
+        // 先限流：每天最多允许改名 2 次
+        String dailyKey = "nickname:daily:" + userId + ":" + LocalDate.now(dailyClock);
+        Long dailyCount = stringRedisTemplate.opsForValue().increment(dailyKey);
+        if (dailyCount != null && dailyCount == 1L) {
+            stringRedisTemplate.expire(dailyKey, Duration.ofHours(24));
+        }
+        if (dailyCount != null && dailyCount > NICKNAME_DAILY_LIMIT) {
+            throw new ServiceException(429, "今日修改昵称次数已达上限");
+        }
+
+        // 后审核：AI 文本审核
+        if (!aiService.moderateText(finalNickname)) {
+            throw new ServiceException("昵称包含违规词汇，请更换");
+        }
+
         SysUser sysUser = new SysUser();
         sysUser.setId(userId);
         sysUser.setNickname(finalNickname);
@@ -145,15 +210,16 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
                 .eq(SysUser::getRole, SystemConstant.Role.ADMIN)
                 .last("LIMIT 1"));
         if (adminUser == null) {
-            Long currentId = UserContext.getCurrentId();
-            if (currentId == null) {
-                throw new ServiceException(MessageConstant.User.SESSION_INVALID);
-            }
-            adminUser = this.getById(currentId);
-            adminUser.setRole(SystemConstant.Role.ADMIN);
-            adminUser.setNickname("站长");
+            /* 首次提权：库中还没有站长记录时直接建一个站长账号。
+               这里刻意不再依赖“当前访客会话”——/admin/login 已在鉴权白名单中，
+               即使该 IP 当日发号额度已满、前端拿不到访客 token，站长也必须能登录。 */
+            adminUser = new SysUser();
             adminUser.setUuid("ADMIN_GOD_MODE_" + UUID.randomUUID().toString().substring(0, 8));
-            this.updateById(adminUser);
+            adminUser.setNickname("站长");
+            adminUser.setAvatar(domainUrl + "/avatar/" + (new java.util.Random().nextInt(10) + 1) + ".png");
+            adminUser.setRole(SystemConstant.Role.ADMIN);
+            adminUser.setCreateTime(LocalDateTime.now());
+            this.save(adminUser);
         }
         String token = jwtUtil.createToken(adminUser.getId(), adminUser.getRole());
         LoginVO loginVO = new LoginVO();

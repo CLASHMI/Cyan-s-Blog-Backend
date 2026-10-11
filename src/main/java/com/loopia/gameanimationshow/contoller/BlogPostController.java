@@ -8,12 +8,14 @@ import com.loopia.gameanimationshow.model.dto.BlogPostDTO;
 import com.loopia.gameanimationshow.model.dto.BlogPostQueryDTO;
 import com.loopia.gameanimationshow.model.vo.BlogPostVO;
 import com.loopia.gameanimationshow.service.BlogPostService;
+import com.loopia.gameanimationshow.service.PostViewCountService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Collections;
 
 @RestController
 @RequestMapping("/blog")
@@ -21,6 +23,7 @@ import java.util.List;
 public class BlogPostController {
 
     private final BlogPostService blogPostService;
+    private final PostViewCountService postViewCountService;
 
     @GetMapping("/recent")
     public Result<List<BlogPost>> recent() {
@@ -29,12 +32,19 @@ public class BlogPostController {
 
     @GetMapping("/list")
     public Result<PageResult<BlogPostVO>> list(BlogPostQueryDTO queryDTO) {
-        return Result.success(blogPostService.listPosts(queryDTO), MessageConstant.Common.QUERY_SUCCESS);
+        PageResult<BlogPostVO> page = blogPostService.listPosts(queryDTO);
+        /* 列表走缓存，view_count 可能是缓存时刻的旧值：这里按 DB 现值 + Redis 增量补成实时值 */
+        postViewCountService.decorate(page.getRecords());
+        return Result.success(page, MessageConstant.Common.QUERY_SUCCESS);
     }
 
     @GetMapping("/detail/{id}")
     public Result<BlogPostVO> detail(@PathVariable Long id) {
-        return Result.success(blogPostService.getPostDetail(id));
+        /* 详情方法被 @Cacheable 包住，重复请求不会进方法体，阅读量增量必须放在这里 */
+        postViewCountService.recordView(id);
+        BlogPostVO vo = blogPostService.getPostDetail(id);
+        postViewCountService.decorate(Collections.singletonList(vo));
+        return Result.success(vo);
     }
 
     @PostMapping("/add")

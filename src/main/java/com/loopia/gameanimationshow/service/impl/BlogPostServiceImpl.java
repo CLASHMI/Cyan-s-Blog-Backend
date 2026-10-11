@@ -106,10 +106,12 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
         }
 
         Integer sortStrategy = queryDTO.getSortStrategy();
-        boolean byHeat = Integer.valueOf(1).equals(sortStrategy);
+        boolean byViews = Integer.valueOf(1).equals(sortStrategy);
         boolean byRating = Integer.valueOf(2).equals(sortStrategy);
-        wrapper.orderByDesc(byHeat, BlogPost::getLikeCount, BlogPost::getAverageRating)
-                .orderByDesc(byRating, BlogPost::getAverageRating, BlogPost::getLikeCount)
+        boolean byLikes = Integer.valueOf(3).equals(sortStrategy);
+        wrapper.orderByDesc(byViews, BlogPost::getViewCount)
+                .orderByDesc(byLikes, BlogPost::getLikeCount)
+                .orderByDesc(byRating, BlogPost::getAverageRating)
                 .orderByDesc(BlogPost::getCreateTime);
 
         Page<BlogPost> page = this.page(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
@@ -141,12 +143,13 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    @CacheEvict(value = {"postList", "statsOverview"}, allEntries = true)
+    @CacheEvict(value = {"postList", "statsOverview", "postStats"}, allEntries = true)
     public void addPost(BlogPostDTO postDTO) {
         UserContext.requireAdmin();
         BlogPost post = new BlogPost();
         BeanUtils.copyProperties(postDTO, post);
         post.setLikeCount(0);
+        post.setViewCount(0);
         post.setAverageRating(BigDecimal.ZERO);
         post.setCreateTime(LocalDateTime.now());
         post.setUpdateTime(post.getCreateTime());
@@ -156,7 +159,7 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    @CacheEvict(value = {"postList", "postDetail", "statsOverview"}, allEntries = true)
+    @CacheEvict(value = {"postList", "postDetail", "statsOverview", "postStats"}, allEntries = true)
     public void updatePost(BlogPostDTO postDTO) {
         UserContext.requireAdmin();
         if (postDTO.getId() == null) {
@@ -176,7 +179,7 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    @CacheEvict(value = {"postList", "postDetail", "statsOverview"}, allEntries = true)
+    @CacheEvict(value = {"postList", "postDetail", "statsOverview", "postStats"}, allEntries = true)
     public void deletePost(Long id) {
         UserContext.requireAdmin();
         blogCommentMapper.delete(new LambdaQueryWrapper<BlogComment>().eq(BlogComment::getPostId, id));

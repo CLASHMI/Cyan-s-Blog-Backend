@@ -74,6 +74,7 @@ loopia:
       domain-url: https://media.cyanspace.work
   auth:
     white-list:
+      - /admin/login      # 站长登录：始终可用，不依赖访客 token，也不受发号限流影响
       - /user/init        # 游客初始化
       - /user/recent
       - /user/ownerAvatar # 站长当前头像（首页展示）
@@ -88,4 +89,5 @@ loopia:
       - /comment/list     # 留言与评论列表
       - /stats/overview   # 数据面板
       - /stats/activity   # 热力图与标签云
+      - /stats/post       # 随笔聚合统计（总浏览量 / 总字数）
       - /uploads/**       # 本地上传资源

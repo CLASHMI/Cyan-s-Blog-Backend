@@ -17,6 +17,8 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * RedisConfig 类
@@ -46,8 +48,13 @@ public class RedisConfig {
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer))
                 .disableCachingNullValues();
 
+        /* 随笔聚合统计想更接近实时（含 Redis 增量），单独给 60 秒；其余仍走 1 小时默认值 */
+        Map<String, RedisCacheConfiguration> initialCacheConfigurations = new HashMap<>();
+        initialCacheConfigurations.put("postStats", config.entryTtl(Duration.ofSeconds(60)));
+
         return RedisCacheManager.builder(factory)
                 .cacheDefaults(config)
+                .withInitialCacheConfigurations(initialCacheConfigurations)
                 .build();
     }
 }

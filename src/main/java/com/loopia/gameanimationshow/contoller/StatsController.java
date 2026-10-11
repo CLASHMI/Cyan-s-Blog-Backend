@@ -4,6 +4,7 @@ import com.loopia.gameanimationshow.common.Result;
 import com.loopia.gameanimationshow.constant.MessageConstant;
 import com.loopia.gameanimationshow.model.vo.ActivityStatsVO;
 import com.loopia.gameanimationshow.model.vo.OverviewStatsVO;
+import com.loopia.gameanimationshow.model.vo.PostStatsVO;
 import com.loopia.gameanimationshow.service.StatsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,5 +39,13 @@ public class StatsController {
     public Result<OverviewStatsVO> getOverviewStats() {
         OverviewStatsVO overviewStats = statsService.getOverviewStats();
         return Result.success(overviewStats, MessageConstant.Common.QUERY_SUCCESS);
+    }
+
+    /**
+     * 随笔聚合统计：全站总浏览量（含 Redis 未落库增量）与全站总字数
+     */
+    @GetMapping("/post")
+    public Result<PostStatsVO> getPostStats() {
+        return Result.success(statsService.getPostStats(), MessageConstant.Common.QUERY_SUCCESS);
     }
 }

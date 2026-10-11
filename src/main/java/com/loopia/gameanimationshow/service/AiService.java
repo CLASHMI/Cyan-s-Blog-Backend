@@ -34,4 +34,12 @@ public interface AiService {
 
     /** 仅供心情服务在取得当日调用标记后使用。 */
     String generateMoodText(String mood, String weather);
+
+    /**
+     * 内容安全审核：判断文本是否包含辱骂、人身攻击、色情、引战或严重违规内容。
+     *
+     * @param text 待审核文本
+     * @return true 表示合规放行；false 表示命中违规
+     */
+    boolean moderateText(String text);
 }

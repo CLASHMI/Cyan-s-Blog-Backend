@@ -37,7 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -212,6 +211,55 @@ public class AiServiceImpl implements AiService {
         }
     }
 
+    /**
+     * 内容安全审核：直接复用全局单例 HttpClient 调用 DeepSeek。
+     * 仅把上游的 REJECT 判定为违规；上游超时、非 200、空响应或异常一律 fail-open 降级放行，绝不阻断业务。
+     */
+    @Override
+    public boolean moderateText(String text) {
+        if (!StringUtils.hasText(text)) {
+            return true;
+        }
+        if (!StringUtils.hasText(apiKey)) {
+            log.error("内容审核未配置 apiKey，按降级策略放行");
+            return true;
+        }
+        if (!StringUtils.hasText(moderateSystemPrompt)) {
+            log.error("内容审核提示词未加载，按降级策略放行");
+            return true;
+        }
+        try {
+            Map<String, Object> body = Map.of(
+                    "model", MODERATE_MODEL,
+                    "messages", List.of(
+                            Map.of("role", "system", "content", moderateSystemPrompt),
+                            Map.of("role", "user", "content", text)),
+                    "max_tokens", MODERATE_MAX_TOKENS, "temperature", 0, "stream", false);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .timeout(MODERATE_TIMEOUT)
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body))).build();
+            HttpResponse<String> response = deepseekHttpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                log.error("内容审核上游返回 HTTP {}，按降级策略放行", response.statusCode());
+                return true;
+            }
+            String verdict = objectMapper.readTree(response.body()).path("choices").path(0)
+                    .path("message").path("content").asText("").strip();
+            /* 上游没给出明确判定（如 reasoning 吃满预算），同样降级放行 */
+            if (!StringUtils.hasText(verdict)) {
+                log.error("内容审核响应为空，按降级策略放行");
+                return true;
+            }
+            return !"REJECT".equalsIgnoreCase(verdict);
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            log.error("内容审核调用异常，按降级策略放行", e);
+            return true;
+        }
+    }
+
     private String baseSystemPrompt = "";
 
     // ---------------- AI 文章摘要 ----------------
@@ -220,9 +268,31 @@ public class AiServiceImpl implements AiService {
 
     private String summarySystemPrompt = "";
 
+    /* ---------------- AI 内容审核提示词（外置，与看板 / 摘要保持同一套加载方式） ---------------- */
+    @Value("classpath:prompts/moderate-prompt.md")
+    private Resource moderatePromptResource;
+
+    private String moderateSystemPrompt = "";
+
     /* 摘要按「文章 ID + 内容指纹」缓存，正文改动后自动失效 */
     private static final String SUMMARY_MODEL = "deepseek-flash";
-    private static final long SUMMARY_CACHE_DURATION = 6 * 60 * 60 * 1000L;
+
+    /* ---------------- AI 内容审核（复用同一个 flash 模型与全局单例 HttpClient） ---------------- */
+    private static final String MODERATE_MODEL = "deepseek-flash";
+    private static final Duration MODERATE_TIMEOUT = Duration.ofSeconds(15);
+    /* flash 会先产出 reasoning，预算给足避免正文被截空 */
+    private static final int MODERATE_MAX_TOKENS = 512;
+    /* 审核系统提示词外置到 prompts/moderate-prompt.md，由 initModeratePrompt() 加载 */
+    /* ---------------- AI 文章摘要：缓存与并发锁都放 Redis，多实例 / 多线程共用同一份真相 ---------------- */
+    private static final String POST_SUMMARY_CACHE_PREFIX = "ai:postSummary:";
+    private static final String POST_SUMMARY_LOCK_PREFIX = "ai:postSummary:lock:";
+    private static final String POST_SUMMARY_FAIL_PREFIX = "ai:postSummary:fail:";
+    /* 摘要缓存 6 小时；key 里带正文指纹，正文一改就是新 key，旧值靠 TTL 自然清理 */
+    private static final Duration POST_SUMMARY_CACHE_TTL = Duration.ofHours(6);
+    /* 生成锁租约：足够覆盖两次 20 秒的模型尝试并留余量，进程崩了也会自动释放 */
+    private static final Duration POST_SUMMARY_LOCK_TTL = Duration.ofSeconds(90);
+    /* 失败负缓存：5 分钟内同一篇直接秒回空串，避免并发请求反复去等模型超时 */
+    private static final Duration POST_SUMMARY_FAIL_TTL = Duration.ofMinutes(5);
     private static final int SUMMARY_MAX_INPUT_CHARS = 6000;
     private static final int SUMMARY_MAX_TOKENS = 2048;
     /* 摘要硬上限：与前端预留方框的字数一致，超出就截到最近一句句末 */
@@ -230,8 +300,6 @@ public class AiServiceImpl implements AiService {
     /* 正文低于这个字数就不值得动用大模型，直接给一句兜底 */
     private static final int SUMMARY_MIN_CONTENT_CHARS = 20;
     private static final String SUMMARY_SHORT_POST_FALLBACK = "这篇随笔很短，短到还没展开就已经说完了。AI 就不多做提炼，直接看原文更有味道。";
-
-    private final Map<Long, CachedSummary> summaryCache = new ConcurrentHashMap<>();
 
     @PostConstruct
     public void initPrompt() {
@@ -244,8 +312,10 @@ public class AiServiceImpl implements AiService {
     }
 
     /**
-     * 为指定随笔生成 AI 摘要：复用现有 DeepSeek 通道，按文章维度缓存。
-     * 文章不存在、没有正文或调用失败时返回空串，交给前端隐藏摘要卡片。
+     * 为指定随笔生成 AI 摘要：复用现有 DeepSeek 通道，缓存与并发锁都在 Redis。
+     * 同一篇文章只放一个人去等模型，其余请求立刻返回空串（前端静默隐藏摘要卡片）。
+     * 生成失败会留下 5 分钟负缓存，期间的请求同样秒回空串，避免反复等模型超时。
+     * 文章不存在、没有正文或调用失败时同样返回空串。
      */
     @Override
     public String summarizePost(Long postId) {
@@ -261,11 +331,18 @@ public class AiServiceImpl implements AiService {
         if (content.length() < SUMMARY_MIN_CONTENT_CHARS) {
             return SUMMARY_SHORT_POST_FALLBACK;
         }
-        int fingerprint = content.hashCode();
-        CachedSummary cached = summaryCache.get(postId);
-        if (cached != null && cached.contentHash() == fingerprint
-                && System.currentTimeMillis() < cached.expireTime()) {
-            return cached.text();
+
+        /* key 里带正文指纹：文章一改就是新 key，旧值读不到、到期自动清理 */
+        String cacheKey = POST_SUMMARY_CACHE_PREFIX + postId + ":" + content.hashCode();
+        String cached = readPostSummaryCache(cacheKey);
+        if (StringUtils.hasText(cached)) {
+            return cached;
+        }
+
+        /* 命中失败负缓存：这篇刚生成失败过，5 分钟内直接秒回空串，不再去等模型 */
+        String failKey = POST_SUMMARY_FAIL_PREFIX + postId + ":" + content.hashCode();
+        if (isPostSummaryFailed(failKey)) {
+            return "";
         }
 
         if (!StringUtils.hasText(summarySystemPrompt)) {
@@ -273,13 +350,77 @@ public class AiServiceImpl implements AiService {
             return "";
         }
 
-        String title = StringUtils.hasText(post.getTitle()) ? post.getTitle().trim() : "无标题随笔";
-        String summary = requestPostSummary(postId, title, content);
-        if (StringUtils.hasText(summary)) {
-            summaryCache.put(postId,
-                    new CachedSummary(fingerprint, summary, System.currentTimeMillis() + SUMMARY_CACHE_DURATION));
+        /* 抢到锁的人去慢慢等 AI；没抢到的立刻返回空串，不排队、不阻塞读者看正文 */
+        String lockKey = POST_SUMMARY_LOCK_PREFIX + postId;
+        String token = UUID.randomUUID().toString();
+        boolean locked;
+        try {
+            locked = Boolean.TRUE.equals(stringRedisTemplate.opsForValue()
+                    .setIfAbsent(lockKey, token, POST_SUMMARY_LOCK_TTL));
+        } catch (Exception e) {
+            log.warn("AI 摘要锁不可用，跳过摘要生成，postId={}，原因类型：{}", postId, e.getClass().getSimpleName());
+            return "";
         }
-        return summary;
+        if (!locked) {
+            return "";
+        }
+
+        try {
+            /* 双检：抢锁的间隙里，别的线程 / 实例可能已经把摘要写进缓存了 */
+            cached = readPostSummaryCache(cacheKey);
+            if (StringUtils.hasText(cached)) {
+                return cached;
+            }
+            /* 双检失败标记：抢锁前别人刚失败过的话，同样直接返回空串 */
+            if (isPostSummaryFailed(failKey)) {
+                return "";
+            }
+            String title = StringUtils.hasText(post.getTitle()) ? post.getTitle().trim() : "无标题随笔";
+            String summary = requestPostSummary(postId, title, content);
+            if (StringUtils.hasText(summary)) {
+                writePostSummaryCache(cacheKey, summary);
+            } else {
+                /* 生成失败（超时 / 空响应）：先落失败标记再释放锁，随后的请求直接命中负缓存 */
+                writePostSummaryFail(failKey);
+            }
+            return summary;
+        } finally {
+            releaseLock(lockKey, token);
+        }
+    }
+
+    private String readPostSummaryCache(String cacheKey) {
+        try {
+            return stringRedisTemplate.opsForValue().get(cacheKey);
+        } catch (Exception e) {
+            log.warn("读取 AI 摘要缓存失败，原因类型：{}", e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private void writePostSummaryCache(String cacheKey, String summary) {
+        try {
+            stringRedisTemplate.opsForValue().set(cacheKey, summary, POST_SUMMARY_CACHE_TTL);
+        } catch (Exception e) {
+            log.warn("写入 AI 摘要缓存失败，原因类型：{}", e.getClass().getSimpleName());
+        }
+    }
+
+    private boolean isPostSummaryFailed(String failKey) {
+        try {
+            return Boolean.TRUE.equals(stringRedisTemplate.hasKey(failKey));
+        } catch (Exception e) {
+            log.warn("读取 AI 摘要失败标记失败，原因类型：{}", e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private void writePostSummaryFail(String failKey) {
+        try {
+            stringRedisTemplate.opsForValue().set(failKey, "1", POST_SUMMARY_FAIL_TTL);
+        } catch (Exception e) {
+            log.warn("写入 AI 摘要失败标记失败，原因类型：{}", e.getClass().getSimpleName());
+        }
     }
 
     /* 摘要请求超时：不能让读者对着“正在阅读”干等一分钟，20 秒拿不到就先放弃 */
@@ -360,7 +501,15 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    private record CachedSummary(int contentHash, String text, long expireTime) {
+    @PostConstruct
+    public void initModeratePrompt() {
+        try {
+            moderateSystemPrompt = StreamUtils.copyToString(moderatePromptResource.getInputStream(),
+                    StandardCharsets.UTF_8);
+            log.info("内容审核提示词加载成功！");
+        } catch (Exception e) {
+            log.error("加载内容审核提示词失败", e);
+        }
     }
 
     /**

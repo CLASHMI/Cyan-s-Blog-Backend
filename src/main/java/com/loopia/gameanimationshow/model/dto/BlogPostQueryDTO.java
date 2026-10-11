@@ -18,5 +18,5 @@ public class BlogPostQueryDTO {
 
     private String keyword; // 标题或标签关键字
 
-    private Integer sortStrategy; // 1-按热度(点赞/评分)
+    private Integer sortStrategy; // 0-最新 1-按浏览量(view_count) 2-按评分 3-按点赞(like_count)
 }

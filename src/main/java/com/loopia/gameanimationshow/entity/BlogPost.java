@@ -37,6 +37,8 @@ public class BlogPost implements Serializable {
 
     private Integer likeCount;
 
+    private Integer viewCount;
+
     private BigDecimal averageRating;
 
     private Integer categoryId;

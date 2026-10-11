@@ -13,12 +13,15 @@ import com.loopia.gameanimationshow.mapper.SysCategoryMapper;
 import com.loopia.gameanimationshow.mapper.SysUserMapper;
 import com.loopia.gameanimationshow.model.vo.ActivityStatsVO;
 import com.loopia.gameanimationshow.model.vo.OverviewStatsVO;
+import com.loopia.gameanimationshow.model.vo.PostStatsVO;
+import com.loopia.gameanimationshow.service.PostViewCountService;
 import com.loopia.gameanimationshow.service.StatsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +37,7 @@ public class StatsServiceImpl implements StatsService {
     private final BlogTagMapper blogTagMapper;
     private final SysCategoryMapper sysCategoryMapper;
     private final SysUserMapper sysUserMapper;
+    private final PostViewCountService postViewCountService;
 
     @Override
     @Cacheable(value = "statsOverview", key = "'overview'")
@@ -83,6 +87,25 @@ public class StatsServiceImpl implements StatsService {
                         .select("category_id", "COUNT(*) AS total").isNotNull("category_id").groupBy("category_id"))
                 .forEach(row -> categoryCounts.put(String.valueOf(row.get("category_id")), toInt(row.get("total"))));
         return ActivityStatsVO.builder().dayCounts(dayCounts).tagCounts(tagCounts).categoryCounts(categoryCounts).build();
+    }
+
+    /**
+     * 随笔聚合统计。总点击量 = 数据库 SUM(view_count) + Redis 里还没刷入的增量，
+     * 结果缓存 60 秒（RedisConfig 里单独配置），避免列表页每次访问都全表聚合。
+     */
+    @Override
+    @Cacheable(value = "postStats", key = "'post'")
+    public PostStatsVO getPostStats() {
+        Map<String, Object> row = blogPostMapper.selectMaps(new QueryWrapper<BlogPost>()
+                        .select("IFNULL(SUM(view_count), 0) AS total_views",
+                                "IFNULL(SUM(CHAR_LENGTH(content)), 0) AS total_words"))
+                .stream().findFirst().orElse(Collections.emptyMap());
+
+        long totalViews = toLong(row.get("total_views")) + postViewCountService.pendingViews();
+        return PostStatsVO.builder()
+                .totalViews(totalViews)
+                .totalWords(toLong(row.get("total_words")))
+                .build();
     }
 
     private static int toInt(Object value) {
