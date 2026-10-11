@@ -12,7 +12,7 @@
     <artifactId>game-animation-show</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>game-animation-show</name>
-    <description>game-animation-show - 动画打卡站</description>
+    <description>个人随笔博客后端 API（Spring Boot 3 + MyBatis-Plus + MySQL + Redis）</description>
     <url/>
     <licenses>
         <license/>

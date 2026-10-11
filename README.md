@@ -1,6 +1,6 @@
 # Cyan's Blog Backend
 
-个人动画作品展厅 / 随笔站的后端 API。Spring Boot 3 + MyBatis-Plus + MySQL + Redis，与前端仓库
+个人随笔博客的后端 API。Spring Boot 3 + MyBatis-Plus + MySQL + Redis，与前端仓库
 [Cyan-s-Blog-Frontend](https://github.com/CLASHMI/Cyan-s-Blog-Frontend) 配套使用。
 
 ## 技术栈
