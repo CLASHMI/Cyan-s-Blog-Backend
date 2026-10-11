@@ -240,6 +240,7 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
             blogLikeMapper.insert(like);
             this.baseMapper.update(null, new LambdaUpdateWrapper<BlogPost>()
                     .setSql("like_count = like_count + 1")
+                    .setSql("update_time = update_time")
                     .eq(BlogPost::getId, id));
         }
     }
@@ -258,6 +259,7 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
         if (deleted > 0) {
             this.baseMapper.update(null, new LambdaUpdateWrapper<BlogPost>()
                     .setSql("like_count = like_count - 1")
+                    .setSql("update_time = update_time")
                     .eq(BlogPost::getId, id)
                     .gt(BlogPost::getLikeCount, 0));
         }

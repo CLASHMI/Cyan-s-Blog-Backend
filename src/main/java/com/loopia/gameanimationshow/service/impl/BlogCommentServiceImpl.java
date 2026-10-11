@@ -1,6 +1,7 @@
 package com.loopia.gameanimationshow.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.loopia.gameanimationshow.common.ClientIpUtil;
@@ -161,10 +162,10 @@ public class BlogCommentServiceImpl extends ServiceImpl<BlogCommentMapper, BlogC
         if (map != null && map.get("avg_rating") != null) {
             avgRating = new BigDecimal(map.get("avg_rating").toString()).setScale(1, RoundingMode.HALF_UP);
         }
-        BlogPost postUpdate = new BlogPost();
-        postUpdate.setId(postId);
-        postUpdate.setAverageRating(avgRating);
-        blogPostMapper.updateById(postUpdate);
+        blogPostMapper.update(null, new LambdaUpdateWrapper<BlogPost>()
+                .set(BlogPost::getAverageRating, avgRating)
+                .setSql("update_time = update_time")
+                .eq(BlogPost::getId, postId));
     }
 
     @Override

@@ -117,6 +117,7 @@ public class PostViewCountService {
             }
             int updated = blogPostMapper.update(null, new LambdaUpdateWrapper<BlogPost>()
                     .setSql("view_count = view_count + {0}", delta)
+                    .setSql("update_time = update_time")
                     .eq(BlogPost::getId, postId));
             if (updated > 0) {
                 hashOps.increment(VIEW_DELTA_KEY, field, -delta);
