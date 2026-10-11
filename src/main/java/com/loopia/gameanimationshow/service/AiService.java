@@ -1,0 +1,37 @@
+package com.loopia.gameanimationshow.service;
+
+import com.loopia.gameanimationshow.model.vo.DailyQuoteVO;
+
+/**
+ * @author NaNloopia
+ * @version 1.0
+ * @since 2026/8/7 
+ * @created 13:57 
+ */
+public interface AiService {
+    /**
+     * 呼叫 DeepSeek 生成看板助手的一句话播报
+     *
+     * @param isAdmin 是否以站长视角发言
+     * @param refresh true 时跳过 30 分钟缓存重新生成
+     */
+    String generateSummary(boolean isAdmin, boolean refresh);
+
+    /**
+     * 为指定随笔生成 AI 摘要
+     *
+     * @param postId 随笔 ID
+     * @return 纯文本摘要；文章不存在、没有正文或调用失败时返回空串
+     */
+    String summarizePost(Long postId);
+
+    /** 公开读取：仅查询当日缓存，不触发生成。 */
+    DailyQuoteVO dailyQuote();
+
+    DailyQuoteVO saveDailyQuote(String text);
+
+    DailyQuoteVO generateDailyQuote();
+
+    /** 仅供心情服务在取得当日调用标记后使用。 */
+    String generateMoodText(String mood, String weather);
+}

@@ -1,0 +1,91 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  # 激活开发环境配置 application-dev.yml
+  profiles:
+    active: dev
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+  # 数据库连接骨架 (引用 dev 中的配置)
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${loopia.datasource.host}:${loopia.datasource.port}/${loopia.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${loopia.datasource.username}
+    password: ${loopia.datasource.password}
+    druid:
+      initial-size: 5
+      max-active: 20
+
+  # Redis 配置骨架
+  data:
+    redis:
+      host: ${loopia.redis.host}
+      port: ${loopia.redis.port}
+      database: ${loopia.redis.database}
+
+  # Jackson 序列化配置 (全局时间格式化)
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: false
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  type-aliases-package: com.loopia.gameanimationshow.entity
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    # 不再强制把每条 SQL 打到 stdout：默认静默，需排查时把 mapper 包日志级别调到 DEBUG 即可
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+loopia:
+  weather:
+    api-key: ${loopia.weather.api-key}
+    api-host: ${loopia.weather.api-host}
+    location: ${loopia.weather.location}
+    city: ${loopia.weather.city}
+  # JWT配置
+  jwt:
+    secret: ${loopia.jwt.secret}
+    expiration: ${loopia.jwt.expiration}
+  # AI 模型配置 (DeepSeek)
+  ai:
+    deepseek:
+      api-key: ${loopia.ai.deepseek.api-key}
+      base-url: https://api.deepseek.com/v1
+  # 接口白名单配置
+  admin:
+    secret: ${loopia.admin.secret}
+
+  tencent:
+    cos:
+      region: ap-chongqing
+      bucket-name: animlog-media-1490415736
+      domain-url: https://media.cyanspace.work
+  auth:
+    white-list:
+      - /user/init        # 游客初始化
+      - /user/recent
+      - /user/ownerAvatar # 站长当前头像（首页展示）
+      - /mood/today       # 今日心情只读；/mood/select 保持鉴权
+      - /weather/current  # 天气代理
+      - /ai/dailyQuote    # 每日一言
+      - /blog/recent      # 最近更新
+      - /blog/list        # 首页博客列表
+      - /blog/detail/**   # 博客详情页
+      - /tag/list         # 标签列表
+      - /category/list    # 分类列表
+      - /comment/list     # 留言与评论列表
+      - /stats/overview   # 数据面板
+      - /stats/activity   # 热力图与标签云
+      - /uploads/**       # 本地上传资源
