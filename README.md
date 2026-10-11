@@ -131,7 +131,8 @@ src/main/resources/
 
 ## 部署要点
 
-- 生产环境用 `--spring.profiles.active=prod`，通过环境变量或配置中心注入 `loopia.*`。
+- 打包：`mvn clean package`，产物为 `target/cyan-blog-backend-0.0.1-SNAPSHOT.jar`。
+- 生产环境：`java -jar cyan-blog-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod`，通过环境变量或配置中心注入 `loopia.*`。
 - 服务自带 context-path `/api`；前端（非 localhost）请求 `/api`，反向代理时注意不要重复拼接。
 - 阅读量计数与刷库、AI 缓存与分布式锁都依赖 Redis；Redis 不可用时相关接口按设计降级，而不是直接报错。
 - `uploads/` 用于本地上传资源，已被 `.gitignore` 忽略，部署时请单独挂载 / 备份。
