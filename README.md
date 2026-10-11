@@ -35,8 +35,8 @@
 ## 快速开始
 
 ```bash
-# 1) 建库，并按顺序执行迁移脚本（项目未接入 Flyway，需手动执行）
-#    src/main/resources/db/migration/*.sql
+# 1) 建库：导入仓库根目录的 script.sql（完整建表脚本，含全部表结构）
+#    mysql -u <db-user> -p <db-name> < script.sql
 
 # 2) 本地配置：新建 src/main/resources/application-dev.yml（已被 .gitignore 忽略，不会进仓库）
 #    需要填写的键见下一节
@@ -124,9 +124,10 @@ src/main/java/com/loopia/gameanimationshow/
 └── service/       # 业务接口与实现
 src/main/resources/
 ├── application.yml
-├── db/migration/  # 需手动执行的 SQL 迁移脚本
 └── prompts/       # AI 提示词（看板人设 / 摘要 / 内容审核）
 ```
+
+建库脚本 `script.sql` 位于**仓库根目录**，包含全部表结构。
 
 ## 部署要点
 
