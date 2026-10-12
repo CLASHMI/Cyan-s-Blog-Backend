@@ -24,19 +24,11 @@ import com.loopia.gameanimationshow.model.dto.BlogPostDTO;
 import com.loopia.gameanimationshow.model.dto.BlogPostQueryDTO;
 import com.loopia.gameanimationshow.model.vo.BlogPostVO;
 import com.loopia.gameanimationshow.service.BlogPostService;
+import com.loopia.gameanimationshow.service.CosStorageService;
 import com.loopia.gameanimationshow.service.SysCategoryService;
-import com.qcloud.cos.COSClient;
-import com.qcloud.cos.ClientConfig;
-import com.qcloud.cos.auth.BasicCOSCredentials;
-import com.qcloud.cos.auth.COSCredentials;
-import com.qcloud.cos.http.HttpProtocol;
-import com.qcloud.cos.model.ObjectMetadata;
-import com.qcloud.cos.model.PutObjectRequest;
-import com.qcloud.cos.region.Region;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -44,6 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -64,17 +57,7 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
     private final BlogTagMapper blogTagMapper;
     private final BlogLikeMapper blogLikeMapper;
     private final BlogCommentMapper blogCommentMapper;
-
-    @Value("${loopia.tencent.cos.secret-id}")
-    private String secretId;
-    @Value("${loopia.tencent.cos.secret-key}")
-    private String secretKey;
-    @Value("${loopia.tencent.cos.region}")
-    private String regionName;
-    @Value("${loopia.tencent.cos.bucket-name}")
-    private String bucketName;
-    @Value("${loopia.tencent.cos.domain-url}")
-    private String domainUrl;
+    private final CosStorageService cosStorageService;
 
     @Override
     public List<BlogPost> recentPosts() {
@@ -204,27 +187,15 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
         if (file.isEmpty()) {
             throw new ServiceException(MessageConstant.Blog.COVER_CANNOT_BE_EMPTY);
         }
+        String originalFilename = file.getOriginalFilename();
+        String extension = "";
+        if (originalFilename != null && originalFilename.contains(".")) {
+            extension = originalFilename.substring(originalFilename.lastIndexOf("."));
+        }
+        String key = UUID.randomUUID().toString().replace("-", "") + extension;
         try {
-            String originalFilename = file.getOriginalFilename();
-            String extension = "";
-            if (originalFilename != null && originalFilename.contains(".")) {
-                extension = originalFilename.substring(originalFilename.lastIndexOf("."));
-            }
-            String newFileName = UUID.randomUUID().toString().replace("-", "") + extension;
-            COSCredentials cred = new BasicCOSCredentials(secretId, secretKey);
-            ClientConfig clientConfig = new ClientConfig(new Region(regionName));
-            clientConfig.setHttpProtocol(HttpProtocol.https);
-            COSClient cosClient = new COSClient(cred, clientConfig);
-            ObjectMetadata objectMetadata = new ObjectMetadata();
-            objectMetadata.setContentLength(file.getSize());
-            objectMetadata.setContentType(file.getContentType());
-            objectMetadata.setHeader("Cache-Control", "max-age=2592000");
-            objectMetadata.setHeader("Content-Disposition", "inline");
-            PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, newFileName, file.getInputStream(), objectMetadata);
-            cosClient.putObject(putObjectRequest);
-            cosClient.shutdown();
-            return domainUrl + "/" + newFileName;
-        } catch (Exception e) {
+            return cosStorageService.upload(key, file.getInputStream(), file.getSize(), file.getContentType());
+        } catch (IOException e) {
             log.error("封面图上传失败", e);
             throw new ServiceException(MessageConstant.Blog.UPLOAD_FAILED);
         }

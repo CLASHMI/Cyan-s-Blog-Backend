@@ -1,4 +1,4 @@
-package com.loopia.gameanimationshow.contoller;
+package com.loopia.gameanimationshow.controller;
 
 import com.loopia.gameanimationshow.common.PageResult;
 import com.loopia.gameanimationshow.common.Result;
@@ -16,6 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Collections;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/blog")
@@ -80,5 +81,12 @@ public class BlogPostController {
     public Result<Void> unlike(@PathVariable Long id) {
         blogPostService.unlikePost(id);
         return Result.success("已取消点赞！");
+    }
+
+    @PostMapping("/recommend/{id}")
+    public Result<Map<String, Object>> recommend(@PathVariable Long id) {
+        Integer isRecommend = blogPostService.toggleRecommend(id);
+        return Result.success(Map.of("id", id, "isRecommend", isRecommend),
+                Integer.valueOf(1).equals(isRecommend) ? "已设为精选" : "已取消精选");
     }
 }

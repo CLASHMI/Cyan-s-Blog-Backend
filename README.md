@@ -115,7 +115,7 @@ src/main/java/com/loopia/gameanimationshow/
 ├── common/        # 统一响应、分页结果、JWT、用户上下文、工具
 ├── config/        # 跨域、MyBatis-Plus、Redis 缓存、WebMvc（拦截器 / 静态资源）
 ├── constant/      # 系统常量与提示文案
-├── contoller/     # 各业务 Controller
+├── controller/    # 各业务 Controller
 ├── entity/        # 数据库实体
 ├── exception/     # 业务异常与全局异常处理
 ├── interceptor/   # 鉴权拦截器

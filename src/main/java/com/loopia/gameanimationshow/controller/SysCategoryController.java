@@ -1,4 +1,4 @@
-package com.loopia.gameanimationshow.contoller;
+package com.loopia.gameanimationshow.controller;
 
 import com.loopia.gameanimationshow.common.PageResult;
 import com.loopia.gameanimationshow.common.Result;

@@ -15,16 +15,9 @@ import com.loopia.gameanimationshow.model.vo.LoginVO;
 import com.loopia.gameanimationshow.model.vo.RecentUserVO;
 import java.util.List;
 import com.loopia.gameanimationshow.service.AiService;
+import com.loopia.gameanimationshow.service.CosStorageService;
 import com.loopia.gameanimationshow.service.SysUserService;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import com.qcloud.cos.COSClient;
-import com.qcloud.cos.ClientConfig;
-import com.qcloud.cos.auth.BasicCOSCredentials;
-import com.qcloud.cos.auth.COSCredentials;
-import com.qcloud.cos.http.HttpProtocol;
-import com.qcloud.cos.model.ObjectMetadata;
-import com.qcloud.cos.model.PutObjectRequest;
-import com.qcloud.cos.region.Region;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -72,6 +66,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     private final CacheManager cacheManager;
     private final StringRedisTemplate stringRedisTemplate;
     private final AiService aiService;
+    private final CosStorageService cosStorageService;
 
     /* 昵称改名每日上限 */
     private static final int NICKNAME_DAILY_LIMIT = 2;
@@ -80,16 +75,6 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
     /* 限流“每日”口径统一使用上海时区 */
     private final Clock dailyClock = Clock.system(ZoneId.of("Asia/Shanghai"));
-    @Value("${loopia.tencent.cos.domain-url}")
-    private String domainUrl;
-    @Value("${loopia.tencent.cos.secret-id}")
-    private String cosSecretId;
-    @Value("${loopia.tencent.cos.secret-key}")
-    private String cosSecretKey;
-    @Value("${loopia.tencent.cos.region}")
-    private String cosRegion;
-    @Value("${loopia.tencent.cos.bucket-name}")
-    private String cosBucket;
 
     /* 读取当天的计数：key 不存在或值异常时按 0 处理，避免脏值把限流判成 500 */
     private long readDailyCounter(String key) {
@@ -143,7 +128,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             user.setUuid(freshUuid);
             user.setNickname("访客_" + freshUuid.substring(0, 4));
             int randomAvatarId = new java.util.Random().nextInt(10) + 1;
-            user.setAvatar(domainUrl + "/avatar/" + randomAvatarId + ".png");
+            user.setAvatar(cosStorageService.urlOf("avatar/" + randomAvatarId + ".png"));
             user.setRole(SystemConstant.Role.VISITOR);
             user.setCreateTime(LocalDateTime.now());
             this.save(user);
@@ -216,7 +201,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             adminUser = new SysUser();
             adminUser.setUuid("ADMIN_GOD_MODE_" + UUID.randomUUID().toString().substring(0, 8));
             adminUser.setNickname("站长");
-            adminUser.setAvatar(domainUrl + "/avatar/" + (new java.util.Random().nextInt(10) + 1) + ".png");
+            adminUser.setAvatar(cosStorageService.urlOf("avatar/" + (new java.util.Random().nextInt(10) + 1) + ".png"));
             adminUser.setRole(SystemConstant.Role.ADMIN);
             adminUser.setCreateTime(LocalDateTime.now());
             this.save(adminUser);
@@ -276,27 +261,15 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
      * 上传文件到腾讯云 COS，文件名走 UUID 保证每次更换头像都是新地址，不被浏览器缓存
      */
     private String uploadToCos(MultipartFile file) {
+        String originalFilename = file.getOriginalFilename();
+        String extension = "";
+        if (originalFilename != null && originalFilename.contains(".")) {
+            extension = originalFilename.substring(originalFilename.lastIndexOf(".")).toLowerCase();
+        }
+        String key = "avatar/" + UUID.randomUUID().toString().replace("-", "") + extension;
         try {
-            String originalFilename = file.getOriginalFilename();
-            String extension = "";
-            if (originalFilename != null && originalFilename.contains(".")) {
-                extension = originalFilename.substring(originalFilename.lastIndexOf(".")).toLowerCase();
-            }
-            String newFileName = "avatar/" + UUID.randomUUID().toString().replace("-", "") + extension;
-            COSCredentials cred = new BasicCOSCredentials(cosSecretId, cosSecretKey);
-            ClientConfig clientConfig = new ClientConfig(new Region(cosRegion));
-            clientConfig.setHttpProtocol(HttpProtocol.https);
-            COSClient cosClient = new COSClient(cred, clientConfig);
-            ObjectMetadata objectMetadata = new ObjectMetadata();
-            objectMetadata.setContentLength(file.getSize());
-            objectMetadata.setContentType(file.getContentType());
-            objectMetadata.setHeader("Cache-Control", "max-age=2592000");
-            objectMetadata.setHeader("Content-Disposition", "inline");
-            PutObjectRequest putObjectRequest = new PutObjectRequest(cosBucket, newFileName, file.getInputStream(), objectMetadata);
-            cosClient.putObject(putObjectRequest);
-            cosClient.shutdown();
-            return domainUrl + "/" + newFileName;
-        } catch (Exception e) {
+            return cosStorageService.upload(key, file.getInputStream(), file.getSize(), file.getContentType());
+        } catch (IOException e) {
             log.error("头像上传失败", e);
             throw new ServiceException(MessageConstant.Blog.UPLOAD_FAILED);
         }
