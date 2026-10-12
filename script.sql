@@ -40,7 +40,8 @@ CREATE TABLE blog_post
     like_count     int           DEFAULT 0                 NULL COMMENT '点赞数',
     view_count     int           DEFAULT 0                 NULL COMMENT '阅读量/点击量',
     average_rating decimal(2, 1) DEFAULT 0.0               NULL COMMENT '平均评分 (如 4.5)',
-    category_id    int                                     NULL COMMENT '博客分类ID (关联 sys_category.id)'
+    category_id    int                                     NULL COMMENT '博客分类ID (关联 sys_category.id)',
+    is_recommend   tinyint      DEFAULT 0                  NULL COMMENT '是否站长精选 (1 是 / 0 否)'
 )
     COMMENT '作品与POSE发布表' CHARSET = utf8mb4;
 

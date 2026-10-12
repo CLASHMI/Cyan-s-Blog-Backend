@@ -85,8 +85,17 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
     }
 
     @Override
-    @Cacheable(value = "postList")
+    /* 精选靠 RAND() 出顺序，进缓存就永远同一批：让它走 condition 跳过缓存 */
+    @Cacheable(value = "postList", condition = "#queryDTO.isRecommend != 1")
     public PageResult<BlogPostVO> listPosts(BlogPostQueryDTO queryDTO) {
+        /* 站长精选：固定 5 篇随机，既不分页也不叠加其它排序 */
+        if (Integer.valueOf(1).equals(queryDTO.getIsRecommend())) {
+            List<BlogPost> picked = this.list(new LambdaQueryWrapper<BlogPost>()
+                    .eq(BlogPost::getIsRecommend, 1)
+                    .last("ORDER BY RAND() LIMIT 5"));
+            return new PageResult<>((long) picked.size(), buildVoList(picked));
+        }
+
         LambdaQueryWrapper<BlogPost> wrapper = new LambdaQueryWrapper<BlogPost>()
                 .eq(queryDTO.getCategoryId() != null, BlogPost::getCategoryId, queryDTO.getCategoryId());
 
@@ -265,6 +274,24 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
         }
     }
 
+    @Override
+    @CacheEvict(value = {"postList", "postDetail"}, allEntries = true)
+    public Integer toggleRecommend(Long id) {
+        UserContext.requireAdmin();
+        BlogPost post = this.getById(id);
+        if (post == null) {
+            throw new ServiceException(MessageConstant.Blog.POST_NOT_FOUND);
+        }
+        int next = Integer.valueOf(1).equals(post.getIsRecommend()) ? 0 : 1;
+        /* update_time 只表示“最后编辑时间”，精选切换不算编辑：
+           显式 setSql 写回自身，压住 MySQL 的 ON UPDATE CURRENT_TIMESTAMP */
+        this.baseMapper.update(null, new LambdaUpdateWrapper<BlogPost>()
+                .set(BlogPost::getIsRecommend, next)
+                .setSql("update_time = update_time")
+                .eq(BlogPost::getId, id));
+        return next;
+    }
+
     private List<BlogPostVO> buildVoList(List<BlogPost> posts) {
         Set<Integer> categoryIds = posts.stream()
                 .map(BlogPost::getCategoryId)
@@ -287,6 +314,10 @@ public class BlogPostServiceImpl extends ServiceImpl<BlogPostMapper, BlogPost> i
     }
 
     private Map<Long, List<String>> buildTagNameMap(List<Long> postIds) {
+        /* 空集合会拼出 IN () 这种非法 SQL，精选随机取不到文章时就会走到这里 */
+        if (postIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
         List<BlogPostTag> relations = blogPostTagMapper.selectList(
                 new LambdaQueryWrapper<BlogPostTag>().in(BlogPostTag::getPostId, postIds));
         if (relations.isEmpty()) {

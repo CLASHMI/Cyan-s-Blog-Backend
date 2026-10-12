@@ -28,4 +28,6 @@ public interface BlogPostService extends IService<BlogPost> {
     void likePost(Long id);
 
     void unlikePost(Long id);
+
+    Integer toggleRecommend(Long id);
 }

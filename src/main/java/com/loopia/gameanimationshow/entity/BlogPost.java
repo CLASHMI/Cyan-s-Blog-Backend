@@ -42,4 +42,7 @@ public class BlogPost implements Serializable {
     private BigDecimal averageRating;
 
     private Integer categoryId;
+
+    /** 是否站长精选 (1 是 / 0 否) */
+    private Integer isRecommend;
 }
