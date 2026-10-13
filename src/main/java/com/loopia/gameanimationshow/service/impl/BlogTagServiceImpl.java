@@ -62,7 +62,8 @@ public class BlogTagServiceImpl extends ServiceImpl<BlogTagMapper, BlogTag> impl
     }
 
     @Override
-    @CacheEvict(value = {"tagList", "statsOverview"}, allEntries = true)
+    /* 改名会让随笔列表/详情里缓存的 tagNames 过期，必须一并清掉 */
+    @CacheEvict(value = {"tagList", "statsOverview", "postList", "postDetail"}, allEntries = true)
     public void updateTag(BlogTagDTO tagDTO) {
         UserContext.requireAdmin();
         if (tagDTO.getId() == null) {

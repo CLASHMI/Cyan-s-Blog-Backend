@@ -66,7 +66,8 @@ public class SysCategoryServiceImpl extends ServiceImpl<SysCategoryMapper, SysCa
     }
 
     @Override
-    @CacheEvict(value = {"categoryList", "statsOverview"}, allEntries = true)
+    /* 改名会让随笔列表/详情里缓存的 categoryName 过期，必须一并清掉 */
+    @CacheEvict(value = {"categoryList", "statsOverview", "postList", "postDetail"}, allEntries = true)
     public void updateCategory(SysCategoryDTO categoryDTO) {
         UserContext.requireAdmin();
         if (categoryDTO.getId() == null) {
