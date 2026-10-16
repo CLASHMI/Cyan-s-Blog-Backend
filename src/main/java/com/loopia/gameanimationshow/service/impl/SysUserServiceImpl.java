@@ -2,6 +2,7 @@ package com.loopia.gameanimationshow.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import cn.hutool.crypto.digest.BCrypt;
 import com.loopia.gameanimationshow.common.ClientIpUtil;
 import com.loopia.gameanimationshow.common.JwtUtil;
 import com.loopia.gameanimationshow.common.ResultCode;
@@ -60,6 +61,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     /* 站长头像大小上限：1MB */
     private static final long AVATAR_MAX_SIZE = 1024 * 1024L;
 
+    /* 前端送来的已是口令的 MD5 十六进制，配置里存的是这个十六进制的 BCrypt 值 */
     @Value("${loopia.admin.secret}")
     private String adminSecret;
     private final JwtUtil jwtUtil;
@@ -183,12 +185,18 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
     /**
      * 管理员登录
-     * @param password 提权暗号
+     *
+     * <p>双重校验：前端先对暗号做一次 MD5，网络里只传 32 位小写十六进制；
+     * 配置里的 loopia.admin.secret 存的是「这段十六进制」的 BCrypt 值。
+     * MD5 不可逆，所以这里不是“解密后再比对”，而是拿收到的摘要直接做 checkpw
+     * （hutool 的 checkpw 对非法 hash 串返回 false，不会抛异常）。</p>
+     *
+     * @param password 提权暗号的 MD5 十六进制（非明文）
      * @return
      */
     @Override
     public LoginVO adminLogin(String password) {
-        if (!adminSecret.equals(password)) {
+        if (!BCrypt.checkpw(password, adminSecret)) {
             throw new ServiceException(MessageConstant.User.SECRET_ERROR);
         }
         SysUser adminUser = this.getOne(new LambdaQueryWrapper<SysUser>()
